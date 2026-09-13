@@ -133,6 +133,8 @@ export default function Home() {
   const [sessions, setSessions] = useState<StoredSession[]>([]);
   const [historyFilter, setHistoryFilter] = useState<"all" | "started" | "stuck">("all");
   const [reparseMode, setReparseMode] = useState(false);
+  const [previousPlan, setPreviousPlan] = useState<ActionPlan | null>(null);
+  const [analysisNotice, setAnalysisNotice] = useState("");
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tiny-start-sessions");
@@ -175,20 +177,38 @@ export default function Home() {
     ? sessions.reduce((sum, session) => sum + session.before - session.after, 0) / sessions.length
     : 0;
 
-  function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!task.trim()) return;
     setIsThinking(true);
-    window.setTimeout(() => {
+    setAnalysisNotice("");
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: task.trim(),
+          previousPlan: reparseMode ? previousPlan : null,
+          correction: reparseMode ? "任务拆解或意图解析不准确，请结合补充后的描述重新判断。" : null,
+        }),
+      });
+      if (!response.ok) throw new Error("analysis unavailable");
+      const data = await response.json() as { plan: ActionPlan };
+      setPlan(data.plan);
+    } catch {
       setPlan(buildPlan(task));
+      setAnalysisNotice("AI 暂时未连接，已使用本地拆解继续。你的内容没有丢失。");
+    } finally {
       setIsThinking(false);
       setReparseMode(false);
+      setPreviousPlan(null);
       setPhase("plan");
-    }, 720);
+    }
   }
 
   function requestReparse() {
     setShowCorrection(false);
+    setPreviousPlan(plan);
     setPlan(null);
     setReparseMode(true);
     setPhase("input");
@@ -242,6 +262,8 @@ export default function Home() {
     setStarted(true);
     setShowCorrection(false);
     setReparseMode(false);
+    setPreviousPlan(null);
+    setAnalysisNotice("");
     setPhase("input");
   }
 
@@ -337,6 +359,8 @@ export default function Home() {
               <button className="back-button" onClick={() => setPhase("input")}>
                 ← 换一件事
               </button>
+
+              {analysisNotice && <div className="analysis-notice">{analysisNotice}</div>}
 
               <div className="insight-card">
                 <div className="insight-meta">

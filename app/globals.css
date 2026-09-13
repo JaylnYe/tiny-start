@@ -241,6 +241,17 @@ h1 {
   background: #fff7d5;
   color: #705d27;
 }
+
+.analysis-notice {
+  margin: 0 0 18px;
+  padding: 11px 14px;
+  border: 1px solid rgba(155, 112, 45, 0.22);
+  border-radius: 12px;
+  background: rgba(255, 244, 219, 0.72);
+  color: #775b30;
+  font-size: 13px;
+  line-height: 1.55;
+}
 .reparse-notice > span { font-size: 20px; line-height: 1; }
 .reparse-notice p { margin: 0; font-size: 12px; line-height: 1.55; }
 .reparse-notice b { display: block; margin-bottom: 2px; color: #554515; }
