@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Phase = "input" | "plan" | "timer" | "feedback" | "done";
+type Phase = "input" | "plan" | "timer" | "feedback" | "done" | "history";
 
 type ActionPlan = {
   stage: string;
@@ -23,6 +23,10 @@ type StoredSession = {
   before: number;
   after: number;
   started: boolean;
+  stage?: string;
+  action?: string;
+  artifact?: string;
+  duration?: number;
 };
 
 const examples = [
@@ -127,6 +131,8 @@ export default function Home() {
   const [artifact, setArtifact] = useState("");
   const [started, setStarted] = useState(true);
   const [sessions, setSessions] = useState<StoredSession[]>([]);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "started" | "stuck">("all");
+  const [reparseMode, setReparseMode] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tiny-start-sessions");
@@ -159,6 +165,16 @@ export default function Home() {
     return Math.max(0, Math.min(1, (total - secondsLeft) / total));
   }, [plan, secondsLeft]);
 
+  const visibleSessions = sessions.filter((session) => {
+    if (historyFilter === "started") return session.started;
+    if (historyFilter === "stuck") return !session.started;
+    return true;
+  });
+
+  const averageDelta = sessions.length
+    ? sessions.reduce((sum, session) => sum + session.before - session.after, 0) / sessions.length
+    : 0;
+
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!task.trim()) return;
@@ -166,8 +182,16 @@ export default function Home() {
     window.setTimeout(() => {
       setPlan(buildPlan(task));
       setIsThinking(false);
+      setReparseMode(false);
       setPhase("plan");
     }, 720);
+  }
+
+  function requestReparse() {
+    setShowCorrection(false);
+    setPlan(null);
+    setReparseMode(true);
+    setPhase("input");
   }
 
   function makeSmaller() {
@@ -195,6 +219,10 @@ export default function Home() {
       before,
       after,
       started,
+      stage: plan?.stage,
+      action: plan?.action,
+      artifact,
+      duration: plan?.duration,
     };
     const nextSessions = [nextSession, ...sessions].slice(0, 20);
     setSessions(nextSessions);
@@ -213,7 +241,14 @@ export default function Home() {
     setAfter(4);
     setStarted(true);
     setShowCorrection(false);
+    setReparseMode(false);
     setPhase("input");
+  }
+
+  function deleteSession(id: number) {
+    const nextSessions = sessions.filter((session) => session.id !== id);
+    setSessions(nextSessions);
+    window.localStorage.setItem("tiny-start-sessions", JSON.stringify(nextSessions));
   }
 
   return (
@@ -223,9 +258,14 @@ export default function Home() {
           <span className="brand-mark">→</span>
           <span>Tiny Start</span>
         </button>
-        <div className="today-pill" aria-label={`今天启动 ${completedToday} 次`}>
+        <button
+          className="today-pill"
+          aria-label={`查看启动记录，今天启动 ${completedToday} 次`}
+          onClick={() => setPhase("history")}
+        >
           <span className="pulse-dot" /> 今天启动 {completedToday} 次
-        </div>
+          <span className="history-arrow">↗</span>
+        </button>
       </header>
 
       <section className="content-wrap">
@@ -239,12 +279,21 @@ export default function Home() {
           {phase === "input" && (
             <section className="input-view">
               <div className="hero-copy">
-                <p className="kicker"><span>先动一下</span>，不用准备好</p>
-                <h1>现在有什么事情，<br />你一直不想开始？</h1>
+                <p className="kicker"><span>{reparseMode ? "重新解析" : "先动一下"}</span>，不用准备好</p>
+                <h1>{reparseMode ? <>刚才理解偏了，<br />再说得具体一点。</> : <>现在有什么事情，<br />你一直不想开始？</>}</h1>
                 <p className="subtitle">
-                  随便说。我们先认出你卡在哪里，再把整件事缩成一个动作。
+                  {reparseMode
+                    ? "原来的内容已经保留。可以补充真正想完成的结果、目前做到哪里，或者指出哪一部分被拆错了。"
+                    : "随便说。我们先认出你卡在哪里，再把整件事缩成一个动作。"}
                 </p>
               </div>
+
+              {reparseMode && (
+                <div className="reparse-notice">
+                  <span>↺</span>
+                  <p><b>正在重新理解任务</b>修改下面的描述后再次解析，不会覆盖以前的启动记录。</p>
+                </div>
+              )}
 
               <form className="task-composer" onSubmit={handleSubmit}>
                 <textarea
@@ -264,7 +313,7 @@ export default function Home() {
                     {isThinking ? (
                       <><span className="thinking-dot" /> 正在找第一步</>
                     ) : (
-                      <>帮我开始 <span>→</span></>
+                      <>{reparseMode ? "重新解析" : "帮我开始"} <span>→</span></>
                     )}
                   </button>
                 </div>
@@ -346,6 +395,10 @@ export default function Home() {
                 <div className="correction-panel">
                   <p>没关系。哪一种更接近？</p>
                   <div>
+                    <button className="reparse-option" onClick={requestReparse}>
+                      <span>↺</span>
+                      <p><b>任务拆解时解析错了</b>保留原文，修改后重新解析</p>
+                    </button>
                     {frictionOptions.map((option) => (
                       <button
                         key={option}
@@ -440,6 +493,69 @@ export default function Home() {
               </div>
               {artifact && <p className="artifact-result">“{artifact}”</p>}
               <button className="start-button" onClick={restart}>再启动一件事</button>
+            </section>
+          )}
+
+          {phase === "history" && (
+            <section className="history-view">
+              <button className="back-button" onClick={() => setPhase("input")}>
+                ← 回到启动页
+              </button>
+              <div className="history-heading">
+                <div>
+                  <p className="kicker"><span>启动记录</span>，看见真实发生过的动作</p>
+                  <h2>不是待办清单。<br />是你跨过阻力的证据。</h2>
+                </div>
+                <button className="compact-start" onClick={restart}>＋ 启动一件事</button>
+              </div>
+
+              <div className="history-stats">
+                <div><span>全部尝试</span><b>{sessions.length}</b><small>次启动会话</small></div>
+                <div><span>成功开始</span><b>{sessions.filter((item) => item.started).length}</b><small>留下了第一次动作</small></div>
+                <div><span>难度校准</span><b>{averageDelta > 0 ? `−${averageDelta.toFixed(1)}` : averageDelta === 0 ? "—" : `+${Math.abs(averageDelta).toFixed(1)}`}</b><small>实际难度与预估之差</small></div>
+              </div>
+
+              <div className="history-toolbar">
+                <div className="history-tabs" role="group" aria-label="筛选启动记录">
+                  <button className={historyFilter === "all" ? "active" : ""} onClick={() => setHistoryFilter("all")}>全部</button>
+                  <button className={historyFilter === "started" ? "active" : ""} onClick={() => setHistoryFilter("started")}>已开始</button>
+                  <button className={historyFilter === "stuck" ? "active" : ""} onClick={() => setHistoryFilter("stuck")}>未开始</button>
+                </div>
+                <span>数据保存在当前浏览器</span>
+              </div>
+
+              {visibleSessions.length ? (
+                <div className="session-list">
+                  {visibleSessions.map((session) => (
+                    <article className="session-item" key={session.id}>
+                      <div className={`session-status ${session.started ? "success" : "stuck"}`}>
+                        {session.started ? "✓" : "↺"}
+                      </div>
+                      <div className="session-content">
+                        <div className="session-meta">
+                          <span>{new Date(session.id).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                          <span>{session.stage ?? "启动阶段"}</span>
+                        </div>
+                        <h3>{session.task}</h3>
+                        {session.action && <p className="session-action"><b>第一步</b>{session.action}</p>}
+                        {session.artifact && <p className="session-artifact">“{session.artifact}”</p>}
+                      </div>
+                      <div className="session-score">
+                        <span>{session.before} → {session.after}</span>
+                        <small>{session.started ? "已开始" : "需要再缩小"}</small>
+                      </div>
+                      <button className="delete-session" onClick={() => deleteSession(session.id)} aria-label={`删除记录：${session.task}`} title="删除这条记录">×</button>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="history-empty">
+                  <span>→</span>
+                  <h3>{sessions.length ? "这个筛选下还没有记录" : "第一条记录，会在你开始之后出现"}</h3>
+                  <p>我们记录启动，不用完成数量催促你。</p>
+                  {!sessions.length && <button className="primary-button" onClick={restart}>开始第一次</button>}
+                </div>
+              )}
             </section>
           )}
         </div>
