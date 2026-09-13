@@ -55,11 +55,11 @@ function buildPlan(raw: string): ActionPlan {
       title: "把等待时间，也当成了持续投入",
       explanation:
         "你不需要一次处理完所有家务。先启动一个会自己继续运转的过程，让环境替你产生进度。",
-      action: "把手机放到够不到的地方，只启动一轮洗衣机。",
-      smallerAction: "把要洗的衣服放到洗衣机旁边，不要求开机。",
-      duration: 3,
-      stopCondition: "听到洗衣机开始运转，就可以停下来。",
-      artifact: "一轮已经开始的洗衣程序",
+      action: "把一件要洗的衣服放到洗衣机旁边。",
+      smallerAction: "从椅子上拿起一件要洗的衣服。",
+      duration: 1,
+      stopCondition: "衣服出现在洗衣机旁边，就可以停下来。",
+      artifact: "一件放到洗衣机旁的衣服",
     };
   }
 
@@ -71,12 +71,11 @@ function buildPlan(raw: string): ActionPlan {
       title: "几个未知项和延期压力挤在了一起",
       explanation:
         "现在不适合直接写完整方案。先恢复上下文，把未知变成正常、可以讨论的数据问题。",
-      action:
-        "打开 VOM、Kafka 离线表和资质上游表的 DDL，各写下业务键与时间字段。",
-      smallerAction: "只找到 VOM 表的业务键，并在便签里记下一行。",
-      duration: 8,
-      stopCondition: "形成三行核对表；不知道的地方直接写“待确认”。",
-      artifact: "数据源核对表",
+      action: "打开 VOM 表的 DDL。",
+      smallerAction: "在代码平台搜索 VOM 表名。",
+      duration: 2,
+      stopCondition: "DDL 出现在屏幕上，就可以停下来。",
+      artifact: "一个已打开的 VOM 表 DDL",
     };
   }
 
@@ -88,11 +87,11 @@ function buildPlan(raw: string): ActionPlan {
       title: "需要先看见一个可以丢弃的东西",
       explanation:
         "先把想法变成一个能被指着讨论的粗糙产物。它不需要正确，只需要存在。",
-      action: "画出“输入 → 下一步卡片 → 反馈”三个界面，文字框也可以。",
-      smallerAction: "只画一个输入框，并写下它上方的那句话。",
-      duration: 8,
-      stopCondition: "纸上或文件里出现三个有名字的方框，就可以停。",
-      artifact: "三屏交互草图",
+      action: "画一个代表输入框的长方形。",
+      smallerAction: "在纸上画一条横线。",
+      duration: 1,
+      stopCondition: "长方形出现，就可以停。",
+      artifact: "一个输入框草图",
     };
   }
 
@@ -103,11 +102,11 @@ function buildPlan(raw: string): ActionPlan {
     title: "脑子看见了整个项目，而不是下一动作",
     explanation:
       "先不解决整件事。我们只留下一个看得见的痕迹，再决定要不要继续。",
-    action: "打开最相关的文件，写下三个你目前还不知道的问题。",
-    smallerAction: "只打开最相关的文件，并写下一个问号。",
-    duration: 5,
-    stopCondition: "写满三个问题即可，问题不需要有答案。",
-    artifact: "三个待确认问题",
+    action: "打开与这件事最相关的文件。",
+    smallerAction: "在文件列表中找到它的名字。",
+    duration: 2,
+    stopCondition: "文件出现在屏幕上，就可以停。",
+    artifact: "一个已打开的相关文件",
   };
 }
 
@@ -239,15 +238,7 @@ export default function Home() {
   }
 
   function makeSmaller() {
-    if (!plan) return;
-    setPlan({
-      ...plan,
-      action: plan.smallerAction,
-      duration: Math.min(plan.duration, 3),
-      stopCondition: "完成这一小步就可以停，不需要顺势继续。",
-      artifact: "一个已发生的微小动作",
-      tags: ["已经再次缩小", ...plan.tags.slice(0, 1)],
-    });
+    replanFromFriction("这一步仍然太大。请避开同义改写，只返回一个更小、更靠前、10 秒到 1 分钟内可发生的原子动作。");
   }
 
   function beginTimer() {
@@ -386,26 +377,13 @@ export default function Home() {
 
               {analysisNotice && <div className="analysis-notice">{analysisNotice}</div>}
 
-              <div className="insight-card">
-                <div className="insight-meta">
-                  <span>{plan.stage}</span>
-                  <span className="soft-label">初步判断</span>
-                </div>
-                <p className="eyebrow">{plan.eyebrow}</p>
-                <h2>{plan.title}</h2>
-                <p className="explanation">{plan.explanation}</p>
-                <div className="tag-row">
-                  {plan.tags.map((tag) => <span key={tag}>{tag}</span>)}
-                </div>
-              </div>
-
               <div className="action-card">
                 <div className="action-number">只做<br /><strong>这一步</strong></div>
                 <div className="action-main">
                   <p className="mini-label">现在唯一要做的事</p>
                   <h3>{plan.action}</h3>
                   <div className="action-details">
-                    <div><span>预计</span><b>{plan.duration} 分钟</b></div>
+                    <div><span>启动窗口</span><b>{plan.duration} 分钟</b></div>
                     <div><span>留下</span><b>{plan.artifact}</b></div>
                   </div>
                   <div className="stop-note">
@@ -414,6 +392,22 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+
+              <details className="insight-disclosure">
+                <summary>为什么给我这一步？ <span>⌄</span></summary>
+                <div className="insight-card">
+                  <div className="insight-meta">
+                    <span>{plan.stage}</span>
+                    <span className="soft-label">一种可能的理解</span>
+                  </div>
+                  <p className="eyebrow">{plan.eyebrow}</p>
+                  <h2>{plan.title}</h2>
+                  <p className="explanation">{plan.explanation}</p>
+                  <div className="tag-row">
+                    {plan.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                  </div>
+                </div>
+              </details>
 
               <div className="difficulty-row">
                 <label>开始前，这一步感觉有多难？</label>
@@ -430,13 +424,13 @@ export default function Home() {
               </div>
 
               <button className="start-button" onClick={beginTimer}>
-                开始 {plan.duration} 分钟 <span>→</span>
+                给自己一个启动窗口 <span>→</span>
               </button>
 
               <div className="adjust-row">
-                <button onClick={makeSmaller}>这一步还是太大</button>
+                <button onClick={makeSmaller} disabled={isReplanning}>{isReplanning ? "正在继续缩小…" : "这一步还是太大"}</button>
                 <i />
-                <button onClick={() => setShowCorrection(!showCorrection)}>你判断错了</button>
+                <button onClick={() => setShowCorrection(!showCorrection)}>不太像我</button>
               </div>
 
               {showCorrection && (
@@ -463,23 +457,24 @@ export default function Home() {
           {phase === "timer" && plan && (
             <section className="timer-view">
               <p className="kicker"><span>现在</span>，世界只剩这一小步</p>
+              <h2>{plan.action}</h2>
+              <p className="timer-stop">做到这里就够了：{plan.stopCondition}</p>
               <div
                 className="timer-ring"
                 style={{ "--progress": `${progress * 360}deg` } as React.CSSProperties}
               >
                 <div>
                   <span>{formatTime(secondsLeft)}</span>
-                  <small>{secondsLeft === 0 ? "时间到了" : "正在发生"}</small>
+                  <small>{secondsLeft === 0 ? "现在可以停" : "启动窗口"}</small>
                 </div>
               </div>
-              <h2>{plan.action}</h2>
-              <p className="timer-stop">做到这里就够了：{plan.stopCondition}</p>
+              <p className="timer-hint">不用等倒计时结束，动作发生就可以结束。</p>
               <div className="timer-actions">
                 <button className="start-button" onClick={() => { setStarted(true); setPhase("feedback"); }}>
-                  我已经动起来了
+                  做到了
                 </button>
                 <button className="text-button" onClick={() => { setStarted(false); setPhase("feedback"); }}>
-                  还没有开始
+                  还没动
                 </button>
               </div>
             </section>

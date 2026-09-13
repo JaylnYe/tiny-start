@@ -253,9 +253,33 @@ h1 {
   line-height: 1.55;
 }
 
+.insight-disclosure {
+  margin: 16px 0 26px;
+}
+
+.insight-disclosure summary {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  list-style: none;
+}
+
+.insight-disclosure summary::-webkit-details-marker { display: none; }
+.insight-disclosure[open] summary span { transform: rotate(180deg); }
+.insight-disclosure .insight-card { margin-top: 14px; }
+
 .correction-panel button:disabled {
   cursor: wait;
   opacity: 0.55;
+}
+
+.timer-hint {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 .reparse-notice > span { font-size: 20px; line-height: 1; }
 .reparse-notice p { margin: 0; font-size: 12px; line-height: 1.55; }
