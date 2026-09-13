@@ -252,6 +252,11 @@ h1 {
   font-size: 13px;
   line-height: 1.55;
 }
+
+.correction-panel button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
 .reparse-notice > span { font-size: 20px; line-height: 1; }
 .reparse-notice p { margin: 0; font-size: 12px; line-height: 1.55; }
 .reparse-notice b { display: block; margin-bottom: 2px; color: #554515; }

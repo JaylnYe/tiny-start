@@ -36,12 +36,12 @@ const examples = [
 ];
 
 const frictionOptions = [
-  "事情太大",
-  "不知道第一步",
-  "害怕做不好",
+  "没理解我要做什么",
+  "这一步还是不知道怎么做",
+  "缺少资料或权限",
+  "需要找人沟通",
   "害怕被评价",
-  "太无聊",
-  "精力不足",
+  "现在没有精力",
 ];
 
 function buildPlan(raw: string): ActionPlan {
@@ -135,6 +135,7 @@ export default function Home() {
   const [reparseMode, setReparseMode] = useState(false);
   const [previousPlan, setPreviousPlan] = useState<ActionPlan | null>(null);
   const [analysisNotice, setAnalysisNotice] = useState("");
+  const [isReplanning, setIsReplanning] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tiny-start-sessions");
@@ -212,6 +213,29 @@ export default function Home() {
     setPlan(null);
     setReparseMode(true);
     setPhase("input");
+  }
+
+  async function replanFromFriction(correction: string) {
+    if (!plan || isReplanning) return;
+    setIsReplanning(true);
+    setAnalysisNotice("");
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task: task.trim(), previousPlan: plan, correction }),
+      });
+      if (!response.ok) throw new Error("replan unavailable");
+      const data = await response.json() as { plan: ActionPlan };
+      setPlan(data.plan);
+      setShowCorrection(false);
+      setBefore(7);
+    } catch {
+      setAnalysisNotice("这次没能重新拆解，原来的第一步还在。可以稍后再试，或修改任务描述。");
+      setShowCorrection(false);
+    } finally {
+      setIsReplanning(false);
+    }
   }
 
   function makeSmaller() {
@@ -417,20 +441,18 @@ export default function Home() {
 
               {showCorrection && (
                 <div className="correction-panel">
-                  <p>没关系。哪一种更接近？</p>
+                  <p>{isReplanning ? "正在根据反馈换一个入口…" : "没关系。刚才具体错在哪里？"}</p>
                   <div>
-                    <button className="reparse-option" onClick={requestReparse}>
+                    <button className="reparse-option" onClick={requestReparse} disabled={isReplanning}>
                       <span>↺</span>
                       <p><b>任务拆解时解析错了</b>保留原文，修改后重新解析</p>
                     </button>
                     {frictionOptions.map((option) => (
                       <button
                         key={option}
-                        onClick={() => {
-                          setPlan({ ...plan, tags: [option], title: `主要阻力更接近“${option}”` });
-                          setShowCorrection(false);
-                        }}
-                      >{option}</button>
+                        disabled={isReplanning}
+                        onClick={() => replanFromFriction(option)}
+                      >{isReplanning ? "重新拆解中…" : option}</button>
                     ))}
                   </div>
                 </div>
