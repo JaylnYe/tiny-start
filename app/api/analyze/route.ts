@@ -11,6 +11,9 @@ type ActionPlan = {
   duration: number;
   stopCondition: string;
   artifact: string;
+  taskType: string;
+  frictionType: string;
+  interventionType: string;
 };
 
 const systemPrompt = `你是 Tiny Start 的行动拆解助手。你的目标不是鼓励用户完成整件事，而是识别此刻的启动阻力，并给出一个具体、可见、可在 10 秒到 2 分钟内发生且允许停止的第一动作。
@@ -42,13 +45,16 @@ Tiny Step 必须原子化：原则上只有一个主要动词；禁止用“然�
   "smallerAction": "action 仍太大时的更小动作",
   "duration": 1,
   "stopCondition": "做到什么就允许停",
-  "artifact": "完成动作后留下的可见痕迹"
+  "artifact": "完成动作后留下的可见痕迹",
+  "taskType": "工作、生活、学习或个人项目",
+  "frictionType": "主要阻力类型",
+  "interventionType": "直接动作、继续缩小、内部澄清或外部询问"
 }`;
 
 function isPlan(value: unknown): value is ActionPlan {
   if (!value || typeof value !== "object") return false;
   const plan = value as Record<string, unknown>;
-  const strings = ["stage", "eyebrow", "title", "explanation", "action", "smallerAction", "stopCondition", "artifact"];
+  const strings = ["stage", "eyebrow", "title", "explanation", "action", "smallerAction", "stopCondition", "artifact", "taskType", "frictionType", "interventionType"];
   return strings.every((key) => typeof plan[key] === "string" && plan[key])
     && Array.isArray(plan.tags)
     && plan.tags.length > 0

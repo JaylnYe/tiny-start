@@ -15,7 +15,13 @@ type ActionPlan = {
   duration: number;
   stopCondition: string;
   artifact: string;
+  taskType?: string;
+  frictionType?: string;
+  interventionType?: string;
 };
+
+type SuggestionVersion = "initial" | "smaller" | "reparsed";
+type HelpfulRating = "yes" | "somewhat" | "no";
 
 type StoredSession = {
   id: number;
@@ -27,6 +33,12 @@ type StoredSession = {
   action?: string;
   artifact?: string;
   duration?: number;
+  taskType?: string;
+  frictionType?: string;
+  interventionType?: string;
+  suggestionVersion?: SuggestionVersion;
+  suggestionHelpful?: HelpfulRating;
+  retryCount?: number;
 };
 
 const examples = [
@@ -135,6 +147,9 @@ export default function Home() {
   const [previousPlan, setPreviousPlan] = useState<ActionPlan | null>(null);
   const [analysisNotice, setAnalysisNotice] = useState("");
   const [isReplanning, setIsReplanning] = useState(false);
+  const [suggestionVersion, setSuggestionVersion] = useState<SuggestionVersion>("initial");
+  const [retryCount, setRetryCount] = useState(0);
+  const [feedbackStep, setFeedbackStep] = useState<"difficulty" | "helpful">("difficulty");
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tiny-start-sessions");
@@ -156,11 +171,6 @@ export default function Home() {
     return () => window.clearInterval(timer);
   }, [phase, secondsLeft]);
 
-  const completedToday = sessions.filter((session) => {
-    const date = new Date(session.id);
-    return date.toDateString() === new Date().toDateString() && session.started;
-  }).length;
-
   const progress = useMemo(() => {
     if (!plan) return 0;
     const total = plan.duration * 60;
@@ -176,12 +186,24 @@ export default function Home() {
   const averageDelta = sessions.length
     ? sessions.reduce((sum, session) => sum + session.before - session.after, 0) / sessions.length
     : 0;
+  const averageBefore = sessions.length ? sessions.reduce((sum, session) => sum + session.before, 0) / sessions.length : 0;
+  const averageAfter = sessions.length ? sessions.reduce((sum, session) => sum + session.after, 0) / sessions.length : 0;
+  const ratedSessions = sessions.filter((session) => session.suggestionHelpful);
+  const helpfulSessions = ratedSessions.filter((session) => session.suggestionHelpful === "yes").length;
+  const calibrationSummary = !sessions.length
+    ? "还没有足够的数据"
+    : averageDelta > 0.5
+      ? "最近你通常会把开始想难一点"
+      : averageDelta < -0.5
+        ? "最近有些动作实际比预想更难"
+        : "最近你的困难预估比较接近实际";
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!task.trim()) return;
     setIsThinking(true);
     setAnalysisNotice("");
+    const wasReparse = reparseMode;
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
@@ -200,6 +222,8 @@ export default function Home() {
       setAnalysisNotice("AI 暂时未连接，已使用本地拆解继续。你的内容没有丢失。");
     } finally {
       setIsThinking(false);
+      setSuggestionVersion(wasReparse ? "reparsed" : "initial");
+      if (wasReparse) setRetryCount((value) => value + 1);
       setReparseMode(false);
       setPreviousPlan(null);
       setPhase("plan");
@@ -214,7 +238,7 @@ export default function Home() {
     setPhase("input");
   }
 
-  async function replanFromFriction(correction: string) {
+  async function replanFromFriction(correction: string, version: SuggestionVersion = "reparsed") {
     if (!plan || isReplanning) return;
     setIsReplanning(true);
     setAnalysisNotice("");
@@ -227,6 +251,8 @@ export default function Home() {
       if (!response.ok) throw new Error("replan unavailable");
       const data = await response.json() as { plan: ActionPlan };
       setPlan(data.plan);
+      setSuggestionVersion(version);
+      setRetryCount((value) => value + 1);
       setShowCorrection(false);
       setBefore(7);
     } catch {
@@ -238,7 +264,7 @@ export default function Home() {
   }
 
   function makeSmaller() {
-    replanFromFriction("这一步仍然太大。请避开同义改写，只返回一个更小、更靠前、10 秒到 1 分钟内可发生的原子动作。");
+    replanFromFriction("这一步仍然太大。请避开同义改写，只返回一个更小、更靠前、10 秒到 1 分钟内可发生的原子动作。", "smaller");
   }
 
   function beginTimer() {
@@ -247,7 +273,7 @@ export default function Home() {
     setPhase("timer");
   }
 
-  function saveSession() {
+  function saveSession(suggestionHelpful?: HelpfulRating) {
     const nextSession: StoredSession = {
       id: Date.now(),
       task,
@@ -258,6 +284,12 @@ export default function Home() {
       action: plan?.action,
       artifact,
       duration: plan?.duration,
+      taskType: plan?.taskType,
+      frictionType: plan?.frictionType ?? plan?.tags[0],
+      interventionType: plan?.interventionType,
+      suggestionVersion,
+      suggestionHelpful,
+      retryCount,
     };
     const nextSessions = [nextSession, ...sessions].slice(0, 20);
     setSessions(nextSessions);
@@ -266,6 +298,11 @@ export default function Home() {
       JSON.stringify(nextSessions),
     );
     setPhase("done");
+  }
+
+  function finishDifficultyFeedback() {
+    if (started && sessions.length % 3 === 0) setFeedbackStep("helpful");
+    else saveSession();
   }
 
   function restart() {
@@ -279,6 +316,9 @@ export default function Home() {
     setReparseMode(false);
     setPreviousPlan(null);
     setAnalysisNotice("");
+    setSuggestionVersion("initial");
+    setRetryCount(0);
+    setFeedbackStep("difficulty");
     setPhase("input");
   }
 
@@ -297,10 +337,10 @@ export default function Home() {
         </button>
         <button
           className="today-pill"
-          aria-label={`查看启动记录，今天启动 ${completedToday} 次`}
+          aria-label="查看我的启动校准"
           onClick={() => setPhase("history")}
         >
-          <span className="pulse-dot" /> 今天启动 {completedToday} 次
+          <span className="pulse-dot" /> 看看我的启动校准
           <span className="history-arrow">↗</span>
         </button>
       </header>
@@ -480,7 +520,7 @@ export default function Home() {
             </section>
           )}
 
-          {phase === "feedback" && plan && (
+          {phase === "feedback" && plan && feedbackStep === "difficulty" && (
             <section className="feedback-view">
               <div className="feedback-mark">{started ? "✓" : "↺"}</div>
               <p className="kicker"><span>{started ? "第一步发生了" : "这次也算一次观察"}</span></p>
@@ -513,7 +553,21 @@ export default function Home() {
                 />
               </label>
 
-              <button className="start-button" onClick={saveSession}>保存这次启动</button>
+              <button className="start-button" onClick={finishDifficultyFeedback}>记录这次感受</button>
+            </section>
+          )}
+
+          {phase === "feedback" && plan && feedbackStep === "helpful" && (
+            <section className="feedback-view helpful-view">
+              <div className="feedback-mark">?</div>
+              <p className="kicker"><span>最后一个轻反馈</span></p>
+              <h2>这条建议有帮助吗？</h2>
+              <p className="subtitle">只偶尔问一次，用来判断哪种干预真的能让动作发生。</p>
+              <div className="helpful-options">
+                <button onClick={() => saveSession("yes")}>有帮助</button>
+                <button onClick={() => saveSession("somewhat")}>一般</button>
+                <button onClick={() => saveSession("no")}>没有</button>
+              </div>
             </section>
           )}
 
@@ -550,10 +604,18 @@ export default function Home() {
                 <button className="compact-start" onClick={restart}>＋ 启动一件事</button>
               </div>
 
+              <div className="calibration-story">
+                <span>最近的观察</span>
+                <h3>{calibrationSummary}</h3>
+                <p>{sessions.length
+                  ? `预计难度 ${averageBefore.toFixed(1)}，实际难度 ${averageAfter.toFixed(1)}，平均${averageDelta >= 0 ? "高估" : "低估"} ${Math.abs(averageDelta).toFixed(1)} 分。`
+                  : "完成一次 Tiny Step 后，这里会帮你比较“想象中的困难”和“实际的困难”。"}</p>
+              </div>
+
               <div className="history-stats">
-                <div><span>全部尝试</span><b>{sessions.length}</b><small>次启动会话</small></div>
-                <div><span>成功开始</span><b>{sessions.filter((item) => item.started).length}</b><small>留下了第一次动作</small></div>
-                <div><span>难度校准</span><b>{averageDelta > 0 ? `−${averageDelta.toFixed(1)}` : averageDelta === 0 ? "—" : `+${Math.abs(averageDelta).toFixed(1)}`}</b><small>实际难度与预估之差</small></div>
+                <div><span>预计难度</span><b>{sessions.length ? averageBefore.toFixed(1) : "—"}</b><small>动作发生前的感受</small></div>
+                <div><span>实际难度</span><b>{sessions.length ? averageAfter.toFixed(1) : "—"}</b><small>行动之后的感受</small></div>
+                <div><span>建议反馈</span><b>{ratedSessions.length ? `${helpfulSessions}/${ratedSessions.length}` : "—"}</b><small>明确认为有帮助</small></div>
               </div>
 
               <div className="history-toolbar">
@@ -576,6 +638,8 @@ export default function Home() {
                         <div className="session-meta">
                           <span>{new Date(session.id).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
                           <span>{session.stage ?? "启动阶段"}</span>
+                          {session.suggestionVersion && <span>{session.suggestionVersion === "initial" ? "初次建议" : session.suggestionVersion === "smaller" ? "缩小后" : "重新解析后"}</span>}
+                          {!!session.retryCount && <span>调整 {session.retryCount} 次</span>}
                         </div>
                         <h3>{session.task}</h3>
                         {session.action && <p className="session-action"><b>第一步</b>{session.action}</p>}
