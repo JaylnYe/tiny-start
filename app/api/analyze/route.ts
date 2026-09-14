@@ -14,6 +14,7 @@ type ActionPlan = {
   taskType: string;
   frictionType: string;
   interventionType: string;
+  stepMode: "single" | "progressive";
 };
 
 const systemPrompt = `你是 Tiny Start 的行动拆解助手。你的目标不是鼓励用户完成整件事，而是识别此刻的启动阻力，并给出一个具体、可见、可在 10 秒到 2 分钟内发生且允许停止的第一动作。
@@ -34,6 +35,8 @@ Tiny Step 必须原子化：原则上只有一个主要动词；禁止用“然�
 
 如果提供了上一次拆解和用户纠正，必须明确避开上一次的错误入口，重新生成 action、smallerAction、stopCondition 和 artifact，不能只更换标签或措辞。
 
+判断任务是否需要渐进步骤：当一个原子动作发生后任务就已经完成或足够启动，stepMode 为 single；复杂工作、学习或项目需要在用户主动选择后继续时，stepMode 为 progressive。不要输出完整步骤列表，只输出当前一步。若用户说明上一步已经发生，就生成紧接着的下一原子动作，不要重复已完成动作。
+
 只输出一个合法 json 对象，不要 Markdown。严格使用这个结构：
 {
   "stage": "阶段名称",
@@ -48,7 +51,8 @@ Tiny Step 必须原子化：原则上只有一个主要动词；禁止用“然�
   "artifact": "完成动作后留下的可见痕迹",
   "taskType": "工作、生活、学习或个人项目",
   "frictionType": "主要阻力类型",
-  "interventionType": "直接动作、继续缩小、内部澄清或外部询问"
+  "interventionType": "直接动作、继续缩小、内部澄清或外部询问",
+  "stepMode": "single 或 progressive"
 }`;
 
 function isPlan(value: unknown): value is ActionPlan {
@@ -59,7 +63,8 @@ function isPlan(value: unknown): value is ActionPlan {
     && Array.isArray(plan.tags)
     && plan.tags.length > 0
     && plan.tags.every((tag) => typeof tag === "string")
-    && typeof plan.duration === "number";
+    && typeof plan.duration === "number"
+    && (plan.stepMode === "single" || plan.stepMode === "progressive");
 }
 
 function isAtomic(plan: ActionPlan) {

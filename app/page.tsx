@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Phase = "input" | "plan" | "timer" | "feedback" | "done" | "history";
+type Phase = "input" | "plan" | "timer" | "continue" | "feedback" | "done" | "history";
 
 type ActionPlan = {
   stage: string;
@@ -18,6 +18,7 @@ type ActionPlan = {
   taskType?: string;
   frictionType?: string;
   interventionType?: string;
+  stepMode?: "single" | "progressive";
 };
 
 type SuggestionVersion = "initial" | "smaller" | "reparsed";
@@ -39,7 +40,20 @@ type StoredSession = {
   suggestionVersion?: SuggestionVersion;
   suggestionHelpful?: HelpfulRating;
   retryCount?: number;
+  completedActions?: string[];
 };
+
+function getDateGroup(timestamp: number) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const daysAgo = Math.round((startToday - startDate) / 86400000);
+  if (daysAgo === 0) return "今天";
+  if (daysAgo === 1) return "昨天";
+  if (daysAgo < 7) return "本周";
+  return "更早";
+}
 
 const examples = [
   "洗碗洗衣服吹头发，一想到很花时间就不想动",
@@ -150,6 +164,9 @@ export default function Home() {
   const [suggestionVersion, setSuggestionVersion] = useState<SuggestionVersion>("initial");
   const [retryCount, setRetryCount] = useState(0);
   const [feedbackStep, setFeedbackStep] = useState<"difficulty" | "helpful">("difficulty");
+  const [stepNumber, setStepNumber] = useState(1);
+  const [completedActions, setCompletedActions] = useState<string[]>([]);
+  const [isLoadingNext, setIsLoadingNext] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tiny-start-sessions");
@@ -182,6 +199,9 @@ export default function Home() {
     if (historyFilter === "stuck") return !session.started;
     return true;
   });
+  const sessionGroups = ["今天", "昨天", "本周", "更早"]
+    .map((label) => ({ label, items: visibleSessions.filter((session) => getDateGroup(session.id) === label) }))
+    .filter((group) => group.items.length);
 
   const averageDelta = sessions.length
     ? sessions.reduce((sum, session) => sum + session.before - session.after, 0) / sessions.length
@@ -273,6 +293,39 @@ export default function Home() {
     setPhase("timer");
   }
 
+  function markActionHappened() {
+    if (!plan) return;
+    setStarted(true);
+    setCompletedActions((items) => [...items, plan.action]);
+    setPhase(plan.stepMode === "progressive" && stepNumber < 5 ? "continue" : "feedback");
+  }
+
+  async function loadNextStep() {
+    if (!plan || isLoadingNext) return;
+    setIsLoadingNext(true);
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: task.trim(),
+          previousPlan: plan,
+          correction: `第 ${stepNumber} 步已经发生。已完成动作：${completedActions.join("；")}。只生成自然衔接的下一个原子动作；如果任务已经足够启动，stepMode 设为 single。`,
+        }),
+      });
+      if (!response.ok) throw new Error("next step unavailable");
+      const data = await response.json() as { plan: ActionPlan };
+      setPlan(data.plan);
+      setStepNumber((value) => value + 1);
+      setPhase("plan");
+    } catch {
+      setAnalysisNotice("下一步暂时没有生成。已经发生的动作仍会被保留。");
+      setPhase("feedback");
+    } finally {
+      setIsLoadingNext(false);
+    }
+  }
+
   function saveSession(suggestionHelpful?: HelpfulRating) {
     const nextSession: StoredSession = {
       id: Date.now(),
@@ -290,6 +343,7 @@ export default function Home() {
       suggestionVersion,
       suggestionHelpful,
       retryCount,
+      completedActions,
     };
     const nextSessions = [nextSession, ...sessions].slice(0, 20);
     setSessions(nextSessions);
@@ -319,6 +373,9 @@ export default function Home() {
     setSuggestionVersion("initial");
     setRetryCount(0);
     setFeedbackStep("difficulty");
+    setStepNumber(1);
+    setCompletedActions([]);
+    setIsLoadingNext(false);
     setPhase("input");
   }
 
@@ -418,7 +475,7 @@ export default function Home() {
               {analysisNotice && <div className="analysis-notice">{analysisNotice}</div>}
 
               <div className="action-card">
-                <div className="action-number">只做<br /><strong>这一步</strong></div>
+                <div className="action-number"><small>0{stepNumber}</small>只做<br /><strong>这一步</strong></div>
                 <div className="action-main">
                   <p className="mini-label">现在唯一要做的事</p>
                   <h3>{plan.action}</h3>
@@ -449,7 +506,7 @@ export default function Home() {
                 </div>
               </details>
 
-              <div className="difficulty-row">
+              {stepNumber === 1 && <div className="difficulty-row">
                 <label>开始前，这一步感觉有多难？</label>
                 <div className="scale" role="group" aria-label="开始前难度">
                   {[1,2,3,4,5,6,7,8,9,10].map((value) => (
@@ -461,7 +518,7 @@ export default function Home() {
                     >{value}</button>
                   ))}
                 </div>
-              </div>
+              </div>}
 
               <button className="start-button" onClick={beginTimer}>
                 给自己一个启动窗口 <span>→</span>
@@ -510,12 +567,27 @@ export default function Home() {
               </div>
               <p className="timer-hint">不用等倒计时结束，动作发生就可以结束。</p>
               <div className="timer-actions">
-                <button className="start-button" onClick={() => { setStarted(true); setPhase("feedback"); }}>
+                <button className="start-button" onClick={markActionHappened}>
                   做到了
                 </button>
                 <button className="text-button" onClick={() => { setStarted(false); setPhase("feedback"); }}>
                   还没动
                 </button>
+              </div>
+            </section>
+          )}
+
+          {phase === "continue" && plan && (
+            <section className="continue-view">
+              <div className="completed-step">✓</div>
+              <p className="kicker"><span>第 {stepNumber} 步发生了</span></p>
+              <h2>到这里已经够了。</h2>
+              <p className="subtitle">下一步不会追着你。只有你想继续时，它才会出现。</p>
+              <div className="continue-actions">
+                <button className="start-button" onClick={loadNextStep} disabled={isLoadingNext}>
+                  {isLoadingNext ? "正在找下一步…" : "我想再走一步"}
+                </button>
+                <button className="text-button" onClick={() => setPhase("feedback")}>今天到这里</button>
               </div>
             </section>
           )}
@@ -628,8 +700,11 @@ export default function Home() {
               </div>
 
               {visibleSessions.length ? (
-                <div className="session-list">
-                  {visibleSessions.map((session) => (
+                <div className="dated-session-list">
+                  {sessionGroups.map((group) => <section className="date-group" key={group.label}>
+                    <h3>{group.label}<span>{group.items.length} 条观察</span></h3>
+                    <div className="session-list">
+                    {group.items.map((session) => (
                     <article className="session-item" key={session.id}>
                       <div className={`session-status ${session.started ? "success" : "stuck"}`}>
                         {session.started ? "✓" : "↺"}
@@ -644,6 +719,7 @@ export default function Home() {
                         <h3>{session.task}</h3>
                         {session.action && <p className="session-action"><b>第一步</b>{session.action}</p>}
                         {session.artifact && <p className="session-artifact">“{session.artifact}”</p>}
+                        {!!session.completedActions?.length && <p className="session-path">走了 {session.completedActions.length} 步 · 最后一步：{session.completedActions.at(-1)}</p>}
                       </div>
                       <div className="session-score">
                         <span>{session.before} → {session.after}</span>
@@ -651,7 +727,9 @@ export default function Home() {
                       </div>
                       <button className="delete-session" onClick={() => deleteSession(session.id)} aria-label={`删除记录：${session.task}`} title="删除这条记录">×</button>
                     </article>
-                  ))}
+                    ))}
+                    </div>
+                  </section>)}
                 </div>
               ) : (
                 <div className="history-empty">
