@@ -15,6 +15,7 @@ type ActionPlan = {
   frictionType: string;
   interventionType: string;
   stepMode: "single" | "progressive";
+  activationStatus: "friction_remaining" | "activation_achieved" | "blocked_external";
 };
 
 const systemPrompt = `你是 Tiny Start 的行动拆解助手。你的目标不是鼓励用户完成整件事，而是识别此刻的启动阻力，并给出一个具体、可见、可在 10 秒到 2 分钟内发生且允许停止的第一动作。
@@ -37,6 +38,8 @@ Tiny Step 必须原子化：原则上只有一个主要动词；禁止用“然�
 
 判断任务是否需要渐进步骤：当一个原子动作发生后任务就已经完成或足够启动，stepMode 为 single；复杂工作、学习或项目需要在用户主动选择后继续时，stepMode 为 progressive。不要输出完整步骤列表，只输出当前一步。若用户说明上一步已经发生，就生成紧接着的下一原子动作，不要重复已完成动作。
 
+同时判断 activationStatus：friction_remaining 表示当前动作发生后仍有明显启动阻力，可以让用户主动再走一步；activation_achieved 表示用户已进入正常推进轨道，应当结束；blocked_external 表示询问或请求已经发出，下一步取决于他人，应当结束等待。目标是移除启动阻力，不是陪用户完成整个任务。通常 1–3 步应结束，只有极少数情况需要第 4–5 步。
+
 只输出一个合法 json 对象，不要 Markdown。严格使用这个结构：
 {
   "stage": "阶段名称",
@@ -52,7 +55,8 @@ Tiny Step 必须原子化：原则上只有一个主要动词；禁止用“然�
   "taskType": "工作、生活、学习或个人项目",
   "frictionType": "主要阻力类型",
   "interventionType": "直接动作、继续缩小、内部澄清或外部询问",
-  "stepMode": "single 或 progressive"
+  "stepMode": "single 或 progressive",
+  "activationStatus": "friction_remaining、activation_achieved 或 blocked_external"
 }`;
 
 function isPlan(value: unknown): value is ActionPlan {
@@ -64,7 +68,8 @@ function isPlan(value: unknown): value is ActionPlan {
     && plan.tags.length > 0
     && plan.tags.every((tag) => typeof tag === "string")
     && typeof plan.duration === "number"
-    && (plan.stepMode === "single" || plan.stepMode === "progressive");
+    && (plan.stepMode === "single" || plan.stepMode === "progressive")
+    && (["friction_remaining", "activation_achieved", "blocked_external"].includes(String(plan.activationStatus)));
 }
 
 function isAtomic(plan: ActionPlan) {

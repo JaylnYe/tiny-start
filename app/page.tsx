@@ -19,10 +19,21 @@ type ActionPlan = {
   frictionType?: string;
   interventionType?: string;
   stepMode?: "single" | "progressive";
+  activationStatus?: "friction_remaining" | "activation_achieved" | "blocked_external";
 };
 
 type SuggestionVersion = "initial" | "smaller" | "reparsed";
 type HelpfulRating = "yes" | "somewhat" | "no";
+type SessionEventType = "initial" | "smaller" | "reparsed" | "continued" | "action_happened" | "action_not_happened";
+
+type SessionEvent = {
+  type: SessionEventType;
+  timestamp: number;
+  stepNumber: number;
+  action?: string;
+  frictionType?: string;
+  interventionType?: string;
+};
 
 type StoredSession = {
   id: number;
@@ -41,6 +52,8 @@ type StoredSession = {
   suggestionHelpful?: HelpfulRating;
   retryCount?: number;
   completedActions?: string[];
+  events?: SessionEvent[];
+  activationStatus?: ActionPlan["activationStatus"];
 };
 
 function getDateGroup(timestamp: number) {
@@ -86,6 +99,8 @@ function buildPlan(raw: string): ActionPlan {
       duration: 1,
       stopCondition: "衣服出现在洗衣机旁边，就可以停下来。",
       artifact: "一件放到洗衣机旁的衣服",
+      stepMode: "single",
+      activationStatus: "activation_achieved",
     };
   }
 
@@ -102,6 +117,8 @@ function buildPlan(raw: string): ActionPlan {
       duration: 2,
       stopCondition: "DDL 出现在屏幕上，就可以停下来。",
       artifact: "一个已打开的 VOM 表 DDL",
+      stepMode: "progressive",
+      activationStatus: "friction_remaining",
     };
   }
 
@@ -118,6 +135,8 @@ function buildPlan(raw: string): ActionPlan {
       duration: 1,
       stopCondition: "长方形出现，就可以停。",
       artifact: "一个输入框草图",
+      stepMode: "progressive",
+      activationStatus: "friction_remaining",
     };
   }
 
@@ -133,6 +152,8 @@ function buildPlan(raw: string): ActionPlan {
     duration: 2,
     stopCondition: "文件出现在屏幕上，就可以停。",
     artifact: "一个已打开的相关文件",
+    stepMode: "progressive",
+    activationStatus: "friction_remaining",
   };
 }
 
@@ -167,6 +188,7 @@ export default function Home() {
   const [stepNumber, setStepNumber] = useState(1);
   const [completedActions, setCompletedActions] = useState<string[]>([]);
   const [isLoadingNext, setIsLoadingNext] = useState(false);
+  const [sessionEvents, setSessionEvents] = useState<SessionEvent[]>([]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tiny-start-sessions");
@@ -203,14 +225,13 @@ export default function Home() {
     .map((label) => ({ label, items: visibleSessions.filter((session) => getDateGroup(session.id) === label) }))
     .filter((group) => group.items.length);
 
-  const averageDelta = sessions.length
-    ? sessions.reduce((sum, session) => sum + session.before - session.after, 0) / sessions.length
+  const difficultySessions = sessions.filter((session) => session.started);
+  const averageDelta = difficultySessions.length
+    ? difficultySessions.reduce((sum, session) => sum + session.before - session.after, 0) / difficultySessions.length
     : 0;
-  const averageBefore = sessions.length ? sessions.reduce((sum, session) => sum + session.before, 0) / sessions.length : 0;
-  const averageAfter = sessions.length ? sessions.reduce((sum, session) => sum + session.after, 0) / sessions.length : 0;
-  const ratedSessions = sessions.filter((session) => session.suggestionHelpful);
-  const helpfulSessions = ratedSessions.filter((session) => session.suggestionHelpful === "yes").length;
-  const calibrationSummary = !sessions.length
+  const averageBefore = difficultySessions.length ? difficultySessions.reduce((sum, session) => sum + session.before, 0) / difficultySessions.length : 0;
+  const averageAfter = difficultySessions.length ? difficultySessions.reduce((sum, session) => sum + session.after, 0) / difficultySessions.length : 0;
+  const calibrationSummary = !difficultySessions.length
     ? "还没有足够的数据"
     : averageDelta > 0.5
       ? "最近你通常会把开始想难一点"
@@ -218,12 +239,54 @@ export default function Home() {
         ? "最近有些动作实际比预想更难"
         : "最近你的困难预估比较接近实际";
 
+  const now = Date.now();
+  const todaySessions = sessions.filter((session) => getDateGroup(session.id) === "今天");
+  const todayDifficultySessions = todaySessions.filter((session) => session.started);
+  const recentWeek = sessions.filter((session) => now - session.id < 7 * 86400000);
+  const previousWeek = sessions.filter((session) => now - session.id >= 7 * 86400000 && now - session.id < 14 * 86400000);
+  const meanRetries = (items: StoredSession[]) => items.length
+    ? items.reduce((sum, session) => sum + (session.retryCount ?? 0), 0) / items.length
+    : 0;
+  const todayBefore = todayDifficultySessions.length ? todayDifficultySessions.reduce((sum, item) => sum + item.before, 0) / todayDifficultySessions.length : 0;
+  const todayAfter = todayDifficultySessions.length ? todayDifficultySessions.reduce((sum, item) => sum + item.after, 0) / todayDifficultySessions.length : 0;
+  const frictionCounts = sessions.reduce<Record<string, number>>((counts, session) => {
+    const key = session.frictionType;
+    if (key) counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
+  const commonFrictions = Object.entries(frictionCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const interventionStats = sessions.reduce<Record<string, { total: number; happened: number }>>((stats, session) => {
+    const key = session.interventionType;
+    if (!key) return stats;
+    stats[key] ??= { total: 0, happened: 0 };
+    stats[key].total += 1;
+    if (session.started) stats[key].happened += 1;
+    return stats;
+  }, {});
+  const bestIntervention = Object.entries(interventionStats)
+    .sort((a, b) => (b[1].happened / b[1].total) - (a[1].happened / a[1].total))[0];
+  const observationSummary = commonFrictions[0]
+    ? `最近你最常卡在“${commonFrictions[0][0]}”。${bestIntervention ? `“${bestIntervention[0]}”目前更容易让下一步发生。` : "再记录几次，就能看见哪种干预更有效。"}`
+    : "还在观察。完成几次启动后，这里会慢慢看见你的阻力规律。";
+
+  function createEvent(type: SessionEventType, currentPlan: ActionPlan | null, currentStep = stepNumber): SessionEvent {
+    return {
+      type,
+      timestamp: Date.now(),
+      stepNumber: currentStep,
+      action: currentPlan?.action,
+      frictionType: currentPlan?.frictionType ?? currentPlan?.tags[0],
+      interventionType: currentPlan?.interventionType,
+    };
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!task.trim()) return;
     setIsThinking(true);
     setAnalysisNotice("");
     const wasReparse = reparseMode;
+    let resolvedPlan: ActionPlan;
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
@@ -236,9 +299,11 @@ export default function Home() {
       });
       if (!response.ok) throw new Error("analysis unavailable");
       const data = await response.json() as { plan: ActionPlan };
-      setPlan(data.plan);
+      resolvedPlan = data.plan;
+      setPlan(resolvedPlan);
     } catch {
-      setPlan(buildPlan(task));
+      resolvedPlan = buildPlan(task);
+      setPlan(resolvedPlan);
       setAnalysisNotice("AI 暂时未连接，已使用本地拆解继续。你的内容没有丢失。");
     } finally {
       setIsThinking(false);
@@ -246,6 +311,9 @@ export default function Home() {
       if (wasReparse) setRetryCount((value) => value + 1);
       setReparseMode(false);
       setPreviousPlan(null);
+      setSessionEvents((events) => wasReparse
+        ? [...events, createEvent("reparsed", resolvedPlan, stepNumber)]
+        : [createEvent("initial", resolvedPlan, 1)]);
       setPhase("plan");
     }
   }
@@ -271,6 +339,7 @@ export default function Home() {
       if (!response.ok) throw new Error("replan unavailable");
       const data = await response.json() as { plan: ActionPlan };
       setPlan(data.plan);
+      setSessionEvents((events) => [...events, createEvent(version === "smaller" ? "smaller" : "reparsed", data.plan)]);
       setSuggestionVersion(version);
       setRetryCount((value) => value + 1);
       setShowCorrection(false);
@@ -297,7 +366,14 @@ export default function Home() {
     if (!plan) return;
     setStarted(true);
     setCompletedActions((items) => [...items, plan.action]);
-    setPhase(plan.stepMode === "progressive" && stepNumber < 5 ? "continue" : "feedback");
+    setSessionEvents((events) => [...events, createEvent("action_happened", plan)]);
+    setPhase(plan.activationStatus === "friction_remaining" && stepNumber < 5 ? "continue" : "feedback");
+  }
+
+  function markActionNotHappened() {
+    setStarted(false);
+    setSessionEvents((events) => [...events, createEvent("action_not_happened", plan)]);
+    setPhase("feedback");
   }
 
   async function loadNextStep() {
@@ -316,6 +392,7 @@ export default function Home() {
       if (!response.ok) throw new Error("next step unavailable");
       const data = await response.json() as { plan: ActionPlan };
       setPlan(data.plan);
+      setSessionEvents((events) => [...events, createEvent("continued", data.plan, stepNumber + 1)]);
       setStepNumber((value) => value + 1);
       setPhase("plan");
     } catch {
@@ -344,6 +421,8 @@ export default function Home() {
       suggestionHelpful,
       retryCount,
       completedActions,
+      events: sessionEvents,
+      activationStatus: plan?.activationStatus,
     };
     const nextSessions = [nextSession, ...sessions].slice(0, 20);
     setSessions(nextSessions);
@@ -376,6 +455,7 @@ export default function Home() {
     setStepNumber(1);
     setCompletedActions([]);
     setIsLoadingNext(false);
+    setSessionEvents([]);
     setPhase("input");
   }
 
@@ -384,6 +464,18 @@ export default function Home() {
     setSessions(nextSessions);
     window.localStorage.setItem("tiny-start-sessions", JSON.stringify(nextSessions));
   }
+
+  const anchor = phase === "history"
+    ? { label: "观察记录", note: "看看什么对你真的有用。" }
+    : phase === "input"
+      ? { label: "00 · 说出来", note: "先不用想清楚。" }
+      : phase === "continue"
+        ? { label: `${String(stepNumber).padStart(2, "0")} ✓`, note: "下一步暂时不会追你。" }
+        : phase === "feedback" || phase === "done"
+          ? started
+            ? { label: `${String(stepNumber).padStart(2, "0")} ✓ · 已经发生`, note: "这一步已经算数。" }
+            : { label: `${String(stepNumber).padStart(2, "0")} · 这次没动`, note: "也没关系，我们只记录真实。" }
+          : { label: `${String(stepNumber).padStart(2, "0")} · 当前一步`, note: "不用完成，只让这一步发生。" };
 
   return (
     <main className="app-shell">
@@ -403,10 +495,10 @@ export default function Home() {
       </header>
 
       <section className="content-wrap">
-        <aside className="side-note" aria-hidden="true">
-          <span>01</span>
+        <aside className="side-note" aria-live="polite">
+          <span>{anchor.label}</span>
           <div className="side-line" />
-          <p>不用完成。<br />只让第一步发生。</p>
+          <p>{anchor.note}</p>
         </aside>
 
         <div className="stage" data-phase={phase}>
@@ -570,7 +662,7 @@ export default function Home() {
                 <button className="start-button" onClick={markActionHappened}>
                   做到了
                 </button>
-                <button className="text-button" onClick={() => { setStarted(false); setPhase("feedback"); }}>
+                <button className="text-button" onClick={markActionNotHappened}>
                   还没动
                 </button>
               </div>
@@ -670,25 +762,44 @@ export default function Home() {
               </button>
               <div className="history-heading">
                 <div>
-                  <p className="kicker"><span>启动记录</span>，看见真实发生过的动作</p>
-                  <h2>不是待办清单。<br />是你跨过阻力的证据。</h2>
+                  <p className="kicker"><span>我的启动画像</span>，只观察，不评价</p>
+                  <h2>看看什么阻力常出现，<br />什么方法真的有用。</h2>
                 </div>
                 <button className="compact-start" onClick={restart}>＋ 启动一件事</button>
               </div>
 
-              <div className="calibration-story">
+              <div className="calibration-story observation-hero">
                 <span>最近的观察</span>
-                <h3>{calibrationSummary}</h3>
-                <p>{sessions.length
-                  ? `预计难度 ${averageBefore.toFixed(1)}，实际难度 ${averageAfter.toFixed(1)}，平均${averageDelta >= 0 ? "高估" : "低估"} ${Math.abs(averageDelta).toFixed(1)} 分。`
-                  : "完成一次 Tiny Step 后，这里会帮你比较“想象中的困难”和“实际的困难”。"}</p>
+                <h3>{observationSummary}</h3>
+                <p>{sessions.length < 5 ? `目前只有 ${sessions.length} 条记录，还在观察，不急着下结论。` : calibrationSummary}</p>
               </div>
 
-              <div className="history-stats">
-                <div><span>预计难度</span><b>{sessions.length ? averageBefore.toFixed(1) : "—"}</b><small>动作发生前的感受</small></div>
-                <div><span>实际难度</span><b>{sessions.length ? averageAfter.toFixed(1) : "—"}</b><small>行动之后的感受</small></div>
-                <div><span>建议反馈</span><b>{ratedSessions.length ? `${helpfulSessions}/${ratedSessions.length}` : "—"}</b><small>明确认为有帮助</small></div>
+              <div className="daily-observation">
+                <div>
+                  <span>每日启动观察</span>
+                  <h3>{todaySessions.length ? `今天记录了 ${todaySessions.length} 次启动。` : "今天还没有记录，也没关系。"}</h3>
+                  <p>{todayDifficultySessions.length
+                    ? `预计难度 ${todayBefore.toFixed(1)}，实际难度 ${todayAfter.toFixed(1)}。你今天通常把开始${todayBefore >= todayAfter ? "想难了" : "想轻了"} ${Math.abs(todayBefore - todayAfter).toFixed(1)} 分。`
+                    : "下一次动作发生后，这里会留下当天的真实体感。"}</p>
+                </div>
+                <b className={`start-feeling ${todayBefore - todayAfter > 0.5 ? "lighter" : todayAfter - todayBefore > 0.5 ? "needs-smaller" : "steady"}`}>
+                  {todayDifficultySessions.length ? (todayBefore - todayAfter > 0.5 ? "更轻了" : todayAfter - todayBefore > 0.5 ? "需要更小入口" : "差不多") : "还在观察"}
+                </b>
               </div>
+
+              <div className="week-trend">
+                最近一周，你平均需要调整 <b>{meanRetries(recentWeek).toFixed(1)}</b> 次才能找到合适动作；
+                {previousWeek.length ? <>上周是 <b>{meanRetries(previousWeek).toFixed(1)}</b> 次。</> : "上周数据还不够。"}
+              </div>
+
+              <div className="observation-grid">
+                <article><span>困难校准</span><b>{difficultySessions.length ? `${averageBefore.toFixed(1)} → ${averageAfter.toFixed(1)}` : "还在观察"}</b><p>{calibrationSummary}</p></article>
+                <article><span>常见阻力</span><b>{commonFrictions.length ? commonFrictions.map(([name]) => name).join(" · ") : "还在观察"}</b><p>{commonFrictions.length ? "这些阻力最近出现得更多。" : "有记录后才会形成画像。"}</p></article>
+                <article><span>有效干预</span><b>{bestIntervention ? bestIntervention[0] : "还在观察"}</b><p>{bestIntervention ? `${bestIntervention[1].happened}/${bestIntervention[1].total} 次让动作发生。` : "先不根据少量数据下结论。"}</p></article>
+                <article><span>调整过程</span><b>{sessions.length ? `${meanRetries(sessions).toFixed(1)} 次` : "还在观察"}</b><p>平均需要缩小或重新理解的次数。</p></article>
+              </div>
+
+              <div className="time-observation">{sessions.length >= 10 ? "时间段规律将在下一轮画像中出现。" : `再积累 ${Math.max(0, 10 - sessions.length)} 条记录后，才会尝试判断哪个时间段更容易卡住。`}</div>
 
               <div className="history-toolbar">
                 <div className="history-tabs" role="group" aria-label="筛选启动记录">
